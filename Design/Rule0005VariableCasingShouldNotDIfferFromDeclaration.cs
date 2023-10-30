@@ -47,7 +47,7 @@ namespace BusinessCentral.LinterCop.Design
 
         private void CheckForBuiltInTypeCasingMismatch(SymbolAnalysisContext ctx)
         {
-            foreach (var node in ctx.Symbol.DeclaringSyntaxReference.GetSyntax().DescendantNodesAndTokens().Where(n => IsValidToken(n)))
+            foreach (Microsoft.Dynamics.Nav.CodeAnalysis.Syntax.SyntaxNodeOrToken node in ctx.Symbol.DeclaringSyntaxReference.GetSyntax().DescendantNodesAndTokens().Where(currentNode => IsValidToken(currentNode)))
             {
                 if (node.Kind.ToString().StartsWith("DotNet"))
                 {
@@ -57,18 +57,26 @@ namespace BusinessCentral.LinterCop.Design
                 if (node.IsToken)
                     if (SyntaxFactory.Token(node.Kind).ToString() != node.ToString())
                         ctx.ReportDiagnostic(Diagnostic.Create(DiagnosticDescriptors.Rule0005VariableCasingShouldNotDIfferFromDeclaration, node.GetLocation(), new object[] { SyntaxFactory.Token(node.Kind), "" }));
+
                 if (node.IsNode && !node.AsNode().ToString().StartsWith("array"))
                 {
                     if ((node.AsNode().IsKind(SyntaxKind.SimpleTypeReference) || node.Kind.ToString().Contains("DataType")) && !node.Kind.ToString().StartsWith("Codeunit") && !node.Kind.ToString().StartsWith("Enum") && !node.Kind.ToString().StartsWith("Label"))
                     {
-                        var targetName = Enum.GetValues(typeof(NavTypeKind)).Cast<NavTypeKind>().FirstOrDefault(Kind => Kind.ToString().ToUpper() == node.AsNode().ToString().ToUpper() && Kind.ToString() != node.AsNode().ToString());
-                        if (targetName != NavTypeKind.None)
+                        NavTypeKind targetName;
+
+                        // node parse results in analyzer crashes??
+                        if (Enum.TryParse(node.AsNode().ToString(), true, out targetName) && targetName.ToString().Equals(node.Kind.ToString(), StringComparison.CurrentCultureIgnoreCase))
+                        {
                             ctx.ReportDiagnostic(Diagnostic.Create(DiagnosticDescriptors.Rule0005VariableCasingShouldNotDIfferFromDeclaration, node.GetLocation(), new object[] { targetName, "" }));
+                        }
+                        // var targetName = Enum.GetValues(typeof(NavTypeKind)).Cast<NavTypeKind>().FirstOrDefault(Kind => Kind.ToString().Equals(node.AsNode().ToString(),StringComparison.CurrentCultureIgnoreCase));
+                        // if (targetName != NavTypeKind.None)
+                        //     ctx.ReportDiagnostic(Diagnostic.Create(DiagnosticDescriptors.Rule0005VariableCasingShouldNotDIfferFromDeclaration, node.GetLocation(), new object[] { targetName, "" }));
                     }
                     if (node.AsNode().IsKind(SyntaxKind.SubtypedDataType) || node.AsNode().IsKind(SyntaxKind.GenericDataType) || node.AsNode().IsKind(SyntaxKind.OptionAccessExpression) ||
                        (node.AsNode().IsKind(SyntaxKind.SimpleTypeReference) && (node.Kind.ToString().StartsWith("Codeunit") || !node.Kind.ToString().StartsWith("Enum") || !node.Kind.ToString().StartsWith("Label"))))
                     {
-                        var targetName = Enum.GetValues(typeof(NavTypeKind)).Cast<NavTypeKind>().FirstOrDefault(Kind => node.AsNode().ToString().ToUpper().StartsWith(Kind.ToString().ToUpper()) && !node.AsNode().ToString().StartsWith(Kind.ToString()));
+                        NavTypeKind targetName = Enum.GetValues(typeof(NavTypeKind)).Cast<NavTypeKind>().FirstOrDefault(Kind => node.AsNode().ToString().ToUpper().StartsWith(Kind.ToString().ToUpper()) && !node.AsNode().ToString().StartsWith(Kind.ToString()));
                         if (targetName != NavTypeKind.None)
                             ctx.ReportDiagnostic(Diagnostic.Create(DiagnosticDescriptors.Rule0005VariableCasingShouldNotDIfferFromDeclaration, node.GetLocation(), new object[] { targetName, "" }));
                     }
@@ -76,30 +84,34 @@ namespace BusinessCentral.LinterCop.Design
             }
         }
 
-        private static bool IsValidToken(Microsoft.Dynamics.Nav.CodeAnalysis.Syntax.SyntaxNodeOrToken n)
+        private static bool IsValidToken(Microsoft.Dynamics.Nav.CodeAnalysis.Syntax.SyntaxNodeOrToken node)
         {
-            if (n.Kind.ToString().Contains("Keyword") &&
-                !n.Kind.ToString().StartsWith("Codeunit") &&
-                !n.Kind.ToString().StartsWith("Enum") &&
-                !n.Kind.ToString().StartsWith("Label") &&
-                !n.Kind.ToString().StartsWith("Action") &&
-                !n.Kind.ToString().StartsWith("Page") &&
-                !n.Kind.ToString().StartsWith("Interface") &&
-                !n.Kind.ToString().StartsWith("Report") &&
-                !n.Kind.ToString().StartsWith("Query") &&
-                !n.Kind.ToString().StartsWith("XmlPort") &&
-                !n.Kind.ToString().StartsWith("DotNet")
-            )
-                return true;
-            if (n.Kind.ToString().Contains("DataType"))
-                return true;
-            if (n.Kind == SyntaxKind.SimpleTypeReference)
-                return true;
-            if (n.Kind == SyntaxKind.SubtypedDataType)
-                return true;
-            if (n.Kind == SyntaxKind.GenericDataType)
-                return true;
-            if (n.Kind == SyntaxKind.OptionAccessExpression)
+            string nodeKindName = node.Kind.ToString();
+
+            if (new[] {SyntaxKind.SimpleTypeReference,
+                SyntaxKind.SubtypedDataType,
+                SyntaxKind.GenericDataType,
+                SyntaxKind.OptionAccessExpression}.Contains(node.Kind)) return true;
+
+            string[] validDataTypes = new[] { // minor improvement??
+                            "Codeunit",
+                            "Enum",
+                            "Label",
+                            "Action",
+                            "Page",
+                            "Interface",
+                            "Report",
+                            "Query",
+                            "XmlPort",
+                            "DotNet"
+                };
+
+            if (nodeKindName.Contains("Keyword"))
+            {
+                if (!validDataTypes.Contains(nodeKindName)) return true;
+            }
+
+            if (nodeKindName.Contains("DataType"))
                 return true;
 
             return false;
@@ -127,6 +139,7 @@ namespace BusinessCentral.LinterCop.Design
                 {
                 }
             }
+
             if (new object[] {
                 OperationKind.GlobalReferenceExpression,
                 OperationKind.LocalReferenceExpression,
@@ -156,6 +169,7 @@ namespace BusinessCentral.LinterCop.Design
                 return;
             }
 
+            // var nodes = ctx.Operation.Syntax.DescendantNodes(nodes => OnlyDiffersInCasing(nodes.ToString(), targetName));
             var nodes = Array.Find(ctx.Operation.Syntax.DescendantNodes((SyntaxNode e) => true).ToArray(), element => OnlyDiffersInCasing(element.ToString(), targetName));
             if (nodes != null)
                 ctx.ReportDiagnostic(Diagnostic.Create(DiagnosticDescriptors.Rule0005VariableCasingShouldNotDIfferFromDeclaration, ctx.Operation.Syntax.GetLocation(), new object[] { targetName, "" }));
